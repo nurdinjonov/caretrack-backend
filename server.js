@@ -19,7 +19,8 @@ const port = process.env.PORT || 5000;
 // Eski app.use(cors()) o'rniga faqat sizning frontendga ruxsat beruvchi kod:
 app.use(
   cors({
-    origin: "caretrack-frontend-qe63kyykf-xojiakbar-s-projects.vercel.app", // Vercel bergan havola (oxiridagi /login qismini yozish shart emas)
+    // Boshida https:// bo'lishi va asosiy havola yozilishi shart!
+    origin: "https://caretrack-frontend-delta.vercel.app",
   }),
 );
 
