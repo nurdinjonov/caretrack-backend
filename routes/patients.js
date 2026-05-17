@@ -4,23 +4,37 @@ import { authenticate, authorize } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-// 1. BEMORLARNI OLISH (Xavfsizlik logikasi qo'shildi)
+const getClinicianDoctorId = async (userId) => {
+  const docRes = await pool.query("SELECT id FROM doctors WHERE user_id = $1", [
+    userId,
+  ]);
+
+  return docRes.rows[0]?.id || null;
+};
+
+const canClinicianAccessPatient = async (userId, patientId) => {
+  const doctorId = await getClinicianDoctorId(userId);
+  if (!doctorId) return { allowed: false, doctorId: null };
+
+  const patientRes = await pool.query(
+    "SELECT id FROM patients WHERE id = $1 AND doctor_id = $2",
+    [patientId, doctorId],
+  );
+
+  return { allowed: patientRes.rows.length > 0, doctorId };
+};
+
+// 1. BEMORLARNI OLISH
 router.get("/", authenticate, async (req, res) => {
   try {
     // AGAR SHIFOKOR (CLINICIAN) KIRGAN BO'LSA:
     if (req.user.role === "Clinician") {
-      // a) Avval bu login qaysi shifokor profiliga tegishli ekanini topamiz
-      const docRes = await pool.query(
-        "SELECT id FROM doctors WHERE user_id = $1",
-        [req.user.id],
-      );
+      const doctorId = await getClinicianDoctorId(req.user.id);
 
       // Agar unga profil biriktirilmagan bo'lsa, bo'sh ro'yxat qaytadi
-      if (docRes.rows.length === 0) return res.json([]);
+      if (!doctorId) return res.json([]);
 
-      const doctorId = docRes.rows[0].id;
-
-      // b) Faqat o'ziga biriktirilgan bemorlarni olib kelamiz
+      // Faqat o'ziga biriktirilgan bemorlarni olib kelamiz
       const result = await pool.query(
         `
         SELECT p.id, p.name, p.personal_details, p.doctor_id, d.name AS doctor_name 
@@ -34,26 +48,34 @@ router.get("/", authenticate, async (req, res) => {
 
       return res.json(result.rows);
     }
+
     // AGAR ADMIN YOKI QABULXONA KIRSA (Barcha bemorlarni ko'radi):
-    else {
-      const result = await pool.query(`
-        SELECT p.id, p.name, p.personal_details, p.doctor_id, d.name AS doctor_name 
-        FROM patients p
-        LEFT JOIN doctors d ON p.doctor_id = d.id
-        ORDER BY p.id DESC
-      `);
-      return res.json(result.rows);
-    }
+    const result = await pool.query(`
+      SELECT p.id, p.name, p.personal_details, p.doctor_id, d.name AS doctor_name 
+      FROM patients p
+      LEFT JOIN doctors d ON p.doctor_id = d.id
+      ORDER BY p.id DESC
+    `);
+    return res.json(result.rows);
   } catch (err) {
     console.error(err.message);
     res.status(500).send("Server xatosi");
   }
 });
 
-// QOLGAN BARCHA SO'ROVLAR (POST, PUT, DELETE) O'ZGARISHSIZ QOLADI
 router.get("/:id", authenticate, async (req, res) => {
   try {
     const { id } = req.params;
+
+    if (req.user.role === "Clinician") {
+      const access = await canClinicianAccessPatient(req.user.id, id);
+      if (!access.allowed) {
+        return res
+          .status(403)
+          .json({ msg: "Sizga bu bemorni ko'rish uchun ruxsat yo'q" });
+      }
+    }
+
     const result = await pool.query("SELECT * FROM patients WHERE id = $1", [
       id,
     ]);
@@ -61,6 +83,7 @@ router.get("/:id", authenticate, async (req, res) => {
       return res.status(404).json({ msg: "Bemor topilmadi" });
     res.json(result.rows[0]);
   } catch (err) {
+    console.error(err.message);
     res.status(500).send("Server xatosi");
   }
 });
@@ -78,6 +101,7 @@ router.post(
       );
       res.json(newPatient.rows[0]);
     } catch (err) {
+      console.error(err.message);
       res.status(500).send("Server xatosi");
     }
   },
@@ -91,6 +115,23 @@ router.put(
     try {
       const { id } = req.params;
       const { name, personal_details, doctor_id } = req.body;
+
+      if (req.user.role === "Clinician") {
+        const access = await canClinicianAccessPatient(req.user.id, id);
+        if (!access.allowed) {
+          return res
+            .status(403)
+            .json({ msg: "Sizga bu bemorni tahrirlash uchun ruxsat yo'q" });
+        }
+
+        // Clinician bemorni boshqa shifokorga o'tkazib yubora olmaydi
+        if (Number(doctor_id) !== Number(access.doctorId)) {
+          return res.status(403).json({
+            msg: "Shifokor bemorni boshqa shifokorga biriktira olmaydi",
+          });
+        }
+      }
+
       const updatePatient = await pool.query(
         "UPDATE patients SET name = $1, personal_details = $2, doctor_id = $3 WHERE id = $4 RETURNING *",
         [name, personal_details, doctor_id, id],
@@ -99,6 +140,7 @@ router.put(
         return res.status(404).json({ msg: "Bemor topilmadi" });
       res.json(updatePatient.rows[0]);
     } catch (err) {
+      console.error(err.message);
       res.status(500).send("Server xatosi");
     }
   },
@@ -115,6 +157,7 @@ router.delete("/:id", authenticate, authorize(["Admin"]), async (req, res) => {
       return res.status(404).json({ msg: "Bemor topilmadi" });
     res.json({ msg: "Bemor o'chirildi" });
   } catch (err) {
+    console.error(err.message);
     res.status(500).send("Server xatosi");
   }
 });

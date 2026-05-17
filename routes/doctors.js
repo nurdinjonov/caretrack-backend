@@ -29,6 +29,8 @@ router.post("/", authenticate, authorize(["Admin"]), async (req, res) => {
         .json({ msg: "Shifokor uchun login va parol kiritish shart!" });
     }
 
+    const normalizedUsername = username.trim().toLowerCase();
+
     // 1. Avval parolni shifrlaymiz
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
@@ -37,7 +39,7 @@ router.post("/", authenticate, authorize(["Admin"]), async (req, res) => {
       // 2. Users jadvaliga yangi 'Clinician' foydalanuvchisini qo'shamiz
       const userResult = await pool.query(
         "INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3) RETURNING id",
-        [username, password_hash, "Clinician"],
+        [normalizedUsername, password_hash, "Clinician"],
       );
       const user_id = userResult.rows[0].id;
 
@@ -51,11 +53,9 @@ router.post("/", authenticate, authorize(["Admin"]), async (req, res) => {
     } catch (dbErr) {
       // UNIQUE constraint (Foydalanuvchi nomi takrorlanganda) xatosini ushlaymiz
       if (dbErr.code === "23505") {
-        return res
-          .status(400)
-          .json({
-            msg: "Bu foydalanuvchi nomi (login) allaqachon band! Boshqa login yozing.",
-          });
+        return res.status(400).json({
+          msg: "Bu foydalanuvchi nomi (login) allaqachon band! Boshqa login yozing.",
+        });
       }
       throw dbErr;
     }
