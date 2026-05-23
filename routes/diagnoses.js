@@ -151,20 +151,38 @@ router.put(
   },
 );
 
-router.delete("/:id", authenticate, authorize(["Admin"]), async (req, res) => {
-  try {
-    const { id } = req.params;
-    const deleteDiagnosis = await pool.query(
-      "DELETE FROM diagnoses WHERE id = $1 RETURNING *",
-      [id],
-    );
-    if (deleteDiagnosis.rows.length === 0)
-      return res.status(404).json({ msg: "Tashxis topilmadi" });
-    res.json({ msg: "Tashxis o'chirildi" });
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send("Server xatosi");
-  }
-});
+router.delete(
+  "/:id",
+  authenticate,
+  authorize(["Admin", "Clinician"]),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (req.user.role === "Clinician") {
+        const diagnosisAccess = await canClinicianAccessDiagnosis(
+          req.user.id,
+          id,
+        );
+        if (!diagnosisAccess.allowed) {
+          return res.status(403).json({
+            msg: "Sizga bu tashxisni o'chirish uchun ruxsat yo'q",
+          });
+        }
+      }
+
+      const deleteDiagnosis = await pool.query(
+        "DELETE FROM diagnoses WHERE id = $1 RETURNING *",
+        [id],
+      );
+      if (deleteDiagnosis.rows.length === 0)
+        return res.status(404).json({ msg: "Tashxis topilmadi" });
+      res.json({ msg: "Tashxis o'chirildi" });
+    } catch (err) {
+      console.error(err.message);
+      res.status(500).send("Server xatosi");
+    }
+  },
+);
 
 export default router;

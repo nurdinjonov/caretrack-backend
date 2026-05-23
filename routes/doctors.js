@@ -87,18 +87,46 @@ router.put("/:id", authenticate, authorize(["Admin"]), async (req, res) => {
 
 // 4. Shifokorni O'CHIRISH (Faqat Admin)
 router.delete("/:id", authenticate, authorize(["Admin"]), async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const { id } = req.params;
-    const deleteDoctor = await pool.query(
+
+    await client.query("BEGIN");
+
+    const doctorResult = await client.query(
+      "SELECT id, user_id FROM doctors WHERE id = $1 FOR UPDATE",
+      [id],
+    );
+
+    if (doctorResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ msg: "Shifokor topilmadi" });
+    }
+
+    const userId = doctorResult.rows[0].user_id;
+
+    const deleteDoctor = await client.query(
       "DELETE FROM doctors WHERE id = $1 RETURNING *",
       [id],
     );
-    if (deleteDoctor.rows.length === 0)
-      return res.status(404).json({ msg: "Shifokor topilmadi" });
-    res.json({ msg: "Shifokor tizimdan o'chirildi" });
+
+    if (userId) {
+      await client.query("DELETE FROM users WHERE id = $1", [userId]);
+    }
+
+    await client.query("COMMIT");
+
+    res.json({
+      msg: "Shifokor va unga bog'langan login parol tizimdan o'chirildi",
+      doctor: deleteDoctor.rows[0],
+    });
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error(err.message);
-    res.status(500).send("Server xatosi");
+    res.status(500).json({ msg: "Server xatosi" });
+  } finally {
+    client.release();
   }
 });
 

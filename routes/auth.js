@@ -81,4 +81,108 @@ router.post("/login", async (req, res) => {
   }
 });
 
+// 3. Joriy foydalanuvchi ma'lumotlarini olish
+router.get("/me", authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT id, username, role FROM users WHERE id = $1",
+      [req.user.id],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ msg: "Foydalanuvchi topilmadi" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Server xatosi");
+  }
+});
+
+// 4. Joriy foydalanuvchi loginini yangilash
+router.put("/profile", authenticate, async (req, res) => {
+  try {
+    const { username } = req.body;
+
+    if (!username || !username.trim()) {
+      return res.status(400).json({ msg: "Login kiritish shart" });
+    }
+
+    const normalizedUsername = username.trim().toLowerCase();
+
+    try {
+      const result = await pool.query(
+        "UPDATE users SET username = $1 WHERE id = $2 RETURNING id, username, role",
+        [normalizedUsername, req.user.id],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ msg: "Foydalanuvchi topilmadi" });
+      }
+
+      res.json(result.rows[0]);
+    } catch (dbErr) {
+      if (dbErr.code === "23505") {
+        return res.status(400).json({ msg: "Bu login allaqachon band" });
+      }
+      throw dbErr;
+    }
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Server xatosi");
+  }
+});
+
+// 5. Joriy foydalanuvchi parolini haqiqiy yangilash
+router.put("/password", authenticate, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res
+        .status(400)
+        .json({ msg: "Amaldagi parol va yangi parol kiritish shart" });
+    }
+
+    if (newPassword.length < 6) {
+      return res
+        .status(400)
+        .json({
+          msg: "Yangi parol kamida 6 ta belgidan iborat bo'lishi kerak",
+        });
+    }
+
+    const user = await pool.query("SELECT * FROM users WHERE id = $1", [
+      req.user.id,
+    ]);
+
+    if (user.rows.length === 0) {
+      return res.status(404).json({ msg: "Foydalanuvchi topilmadi" });
+    }
+
+    const validPassword = await bcrypt.compare(
+      currentPassword,
+      user.rows[0].password_hash,
+    );
+
+    if (!validPassword) {
+      return res.status(400).json({ msg: "Amaldagi parol noto'g'ri" });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const password_hash = await bcrypt.hash(newPassword, salt);
+
+    await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [
+      password_hash,
+      req.user.id,
+    ]);
+
+    res.json({ msg: "Parolingiz muvaffaqiyatli yangilandi" });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Server xatosi");
+  }
+});
+
 export default router;
